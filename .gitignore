@@ -1,0 +1,51 @@
+# Environment
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.toast/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Databases & local storage
+*.db
+*.sqlite
+local_qdrant_db/
+qdrant_storage/
+pgdata/
+uploads/
+
+# IDEs
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Portable Git (local workspace only)
+mingit/
+mingit.zip
+
+# Build
+build/
+dist/
+*.egg-info/
