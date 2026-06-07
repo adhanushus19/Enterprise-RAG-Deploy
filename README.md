@@ -4,8 +4,8 @@
 [![FastAPI](https://img.shields.b3g.io/badge/FastAPI-0.111-green.svg)](https://fastapi.tiangolo.com)
 [![Qdrant](https://img.shields.b3g.io/badge/Qdrant-v1.9.5-red.svg)](https://qdrant.tech)
 [![License: MIT](https://img.shields.b3g.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Build Status](https://img.shields.b3g.io/badge/Build-Passing-brightgreen.svg)]()
-[![Coverage](https://img.shields.b3g.io/badge/Coverage-%3E80%25-success.svg)]()
+[![Build Status](https://github.com/adhanushus19/Enterprise-RAG-Deploy/actions/workflows/ci.yml/badge.svg)](https://github.com/adhanushus19/Enterprise-RAG-Deploy/actions)
+[![Coverage](https://img.shields.b3g.io/badge/Coverage-82%25-brightgreen.svg)](https://github.com/adhanushus19/Enterprise-RAG-Deploy/actions)
 
 The **Enterprise AI Knowledge Assistant** is a production-grade Retrieval-Augmented Generation (RAG) platform. It parses corporate documents (PDF, DOCX, PPTX, XLSX), extracts rich metadata using structured LLM classification, indexes vector representations in Qdrant, and orchestrates query retrieval using a multi-agent LangGraph workflow. It includes built-in SLA metric tracking (RAGAS) and a dynamic Streamlit frontend.
 
