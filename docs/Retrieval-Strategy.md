@@ -24,48 +24,54 @@ This document details the multi-stage retrieval pipeline designed to ensure maxi
                                                     ▼
                                         [Verification Agent] ──(Failed)──> [Query Rewrite Loop]
                                                     │
-                                                 (Passed)
+                                                  (Passed)
                                                     │
                                                     ▼
-                                         [Citation Generation]
+                                          [Citation Generation]
                                                     │
                                                     ▼
-                                           [Answer Generation]
+                                            [Answer Generation]
 ```
 
-### Stage 1: Query Rewriting
-- **Mechanism:** The `QueryRewriterAgent` resolves ambiguity, expands synonyms, and strips conversational noise using `gpt-4o-mini` before the query hits the index.
-- **Why:** Corporate users often write vague queries (e.g. "What did they change in it?"). The rewriter tracks the last 5 chat messages to inject names and definitions.
+### Stage 1: Query Expansion & Rewriting
+The `QueryRewriterAgent` contextually expands the user query using current and historical chat logs via `gpt-4o-mini`. If a prior verification step fails, it integrates feedback (e.g., "Missing details about Q2") to generate refined terms.
 
-### Stage 2: Hybrid Retrieval (Dense + Sparse)
-- **Dense:** Vector search against Qdrant (`text-embedding-3-small` embeddings) captures semantic relationships.
-- **Sparse:** A python-side `BM25Okapi` index runs on the candidates matching the metadata scope to secure exact keyword matches (e.g. alphanumeric product codes, names, section numbers).
+### Stage 2: Dense Semantic Search (Qdrant)
+- **Embedding Model:** `text-embedding-3-small` (1536 dimensions).
+- **Distance Metric:** Cosine similarity.
+- **Goal:** Capture conceptual similarities, synonyms, and multi-lingual equivalents.
 
-### Stage 3: Metadata Filtering
-- **Mechanism:** Applied at the database layer (SQL query) and the vector index layer (Qdrant filter payload) before retrieval occurs.
-- **Why:** Restricts search scopes to relevant files (e.g. only PPTX slides, or files tagged `finance`).
+### Stage 3: Sparse Keyword Search (BM25)
+- **Algorithm:** `BM25Okapi` running on python-side tokenized text.
+- **Tokenization:** Query and document contents are lowercased and split into word tokens.
+- **Goal:** Retrieve exact names, dates, serial keys, and specific jargon that dense vector models might dilate or rank low.
 
-### Stage 4: Reranking
-- **Mechanism:** The retrieved candidates are processed by the `RerankerAgent`. It scores each chunk on a `[0.0 - 10.0]` scale. Chunks scoring below `2.0` are pruned, and the remainder are sorted descending.
-- **Why:** Standard vector scores reflect similarity, not answerability. Reranking ensures the most answerable text is placed at the top of the context block.
+### Stage 4: Metadata Filtering
+Applied dynamically prior to search:
+- **Qdrant:** Binds filter conditions (`MatchValue` for strings, `MatchAny` for list elements, tags) directly in the vector search body.
+- **SQL:** Performs SQL joins on target files, filtering metadata values (e.g., `department = 'HR'`).
 
-### Stage 5: Context Compression
-- **Mechanism:** We restrict the final context injected into the answer generator to the top 5 reranked chunks. This limits prompt window expansion, mitigates "lost in the middle" phenomena, and saves token costs.
+### Stage 5: Reciprocal Rank Fusion (RRF)
+RRF combines rank lists from dense and sparse queries to create a unified priority score. The RRF score of a document chunk $d$ is:
 
-### Stage 6: Citation Generation & Pruning
-- **Mechanism:** Each chunk in the context is mapped to a sequential citation ID `[1]`, `[2]`. The Answer Agent places these markers after statements it generates. A post-processing step in the `CitationAgent` matches these numbers to the text, stripping citations that were not referenced.
+$$RRF(d) = \sum_{m \in M} \frac{1}{k + r_m(d)}$$
 
-### Stage 7: Answer Generation
-- **Mechanism:** Synthesized by the Answer Agent, which is strictly instructed to deny knowledge if the verified context does not contain the answer.
+Where:
+- $M$ is the set of search engines (dense & sparse).
+- $r_m(d)$ is the rank position of document $d$ in engine $m$ (1-indexed).
+- $k$ is a constant hyperparameter (default: **60**), which acts as a stabilizer to prevent low ranks from excessively penalizing matches.
+
+### Stage 6: LLM Reranking
+- Chunks are evaluated using a strict relevance prompt. The LLM rates each chunk's utility to answer the query on a `[0.0 - 10.0]` scale.
+- Chunks scoring `< 2.0` are discarded.
+- Only the top 5 highest-ranked chunks are kept.
+
+### Stage 7: Citation & Generation
+Each chunk receives a citation identifier. The `CitationAgent` matches inline references post-synthesis, pruning unused citation markers from the final text payload.
 
 ---
 
-## 2. Engineering Tradeoffs & Scalability
-- **RRF Const K:** The RRF constant $k$ is set to 60. Increasing $k$ decreases the impact of top-ranked items, while decreasing $k$ prioritizes top hits. A value of 60 balances dense and sparse systems.
-- **In-Memory BM25:** Building the BM25 index dynamically on database records is efficient when scoped with metadata filters (< 10,000 chunks). If the database grows to millions of files, this should be offloaded to PostgreSQL's native `pg_trgm` or a separate ElasticSearch node.
+## 2. Engineering Tradeoffs & Scale
 
----
-
-## 3. Failure Scenarios & Future Improvements
-- **Zero Hits:** If hybrid search yields zero hits, the Verification Agent fails immediately, triggering a query rewrite. If that fails, the pipeline returns a clean notification prompting the user to upload missing documents.
-- **Future Improvements:** Implement parent-child chunking where small chunks (e.g., 100 tokens) are indexed for retrieval, but their parent contexts (e.g., 1000 tokens) are fed to the generation step, improving retrieval precision.
+- **Dynamic BM25 vs. Native TSVector:** Building the BM25 index on the fly is lightweight for isolated scopes. For massive corporate vaults (>100,000 files), this should be shifted to PostgreSQL native full-text indexing or an external Elasticsearch instance.
+- **RRF Const:** $k=60$ is the industry standard. Increasing $k$ decreases the impact of top-ranked items, while decreasing $k$ prioritizes top hits.

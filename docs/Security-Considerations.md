@@ -10,37 +10,43 @@ This document outlines the security controls implemented to protect the RAG plat
 | :--- | :--- | :--- |
 | **Unauthorized Access** | Unauthenticated users invoking query endpoints, exposing sensitive company files. | Enforced header-based authentication `X-API-Key` on all FastAPI routes. |
 | **API Denial of Service** | Attackers flooding inference endpoints, inflating OpenAI API token costs. | Custom IP-based rate-limiting middleware restricting traffic to 60 requests/min. |
-| **Path Traversal / Ingress** | Malicious file uploads (e.g. `../../etc/passwd`) targeting server filesystem. | File path sanitization, type-checking, and isolated target upload folders. |
+| **Path Traversal / Ingress** | Malicious file uploads (e.g. `../../etc/passwd`) targeting server filesystem. | File path sanitization via `os.path.basename` extraction and isolated target folders. |
+| **Large-file OOM Attacks** | Attackers uploading huge files to exhaust server memory during parsing. | Enforces strict **10MB** maximum file upload limit on the API gateway level. |
 | **Data Leakage (LLM)** | Sensitive documents transmitted to external LLM providers for training. | Configured prompts and API calls to opt-out of data sharing (Enterprise OpenAI API models do not train on customer data). |
 
 ---
 
 ## 2. Secure File Ingestion
 
-### Business Problem
-Allowing employees to upload arbitrary documents can lead to server compromise (shell injections, malicious macros) or database corruption.
+### Extension Validation
+- Upload endpoints strictly whitelist only standard extensions: `pdf`, `docx`, `pptx`, `xlsx`.
+- Filenames are sanitized on ingress to block directory traversal or escape characters.
 
-### Design Rationale
-- **Extension Whitelisting:** We strictly permit only `pdf`, `docx`, `pptx`, and `xlsx` extensions. Any other type triggers a 400 Bad Request error.
-- **Physical Isolation:** Files are renamed on disk using timestamp prefixes (e.g., `171779929_policy.pdf`) to prevent naming collisions and file overwriting.
-- **Background Processing:** Ingestion tasks are executed inside a separate background thread, ensuring any parser crash does not compromise the main HTTP server request lifecycle.
+### Upload Limits
+- The FastAPI gateway reads a maximum of `10MB + 1` bytes before validating the payload size.
+- If the content length exceeds `10MB`, it raises a `413 Payload Too Large` error and terminates the connection before processing, preventing memory exhaustion.
 
----
-
-## 3. Environment Variable & Secret Management
-
-- **No Hardcoded Secrets:** All credentials (`DATABASE_URL`, `QDRANT_HOST`, `OPENAI_API_KEY`) are loaded dynamically using Pydantic Settings from system variables or `.env` files.
-- **Docker Compose Scoping:** Production container configurations pass secrets as environment variables injected from target environments (e.g., Github Secrets, AWS Secrets Manager), keeping them out of source control.
+### Thread Isolation
+- Physical files are saved with unique timestamp prefixes.
+- Parsers run as background tasks outside the primary HTTP request loop to prevent system thread blocks.
 
 ---
 
-## 4. Engineering Tradeoffs & Scalability
-* **API Key Auth vs. OAuth2/OIDC:** We chose header-based API key validation for simplicity, performance, and compatibility with service-to-service automation. For full user-level access controls, future iterations should transition to OAuth2 with JSON Web Tokens (JWT) integrated with Okta or Azure AD.
-* **Rate Limiting Storage:** The current rate limiter uses an in-memory dictionary. If scaled horizontally across multiple containers, this should be migrated to a shared **Redis** instance to enforce global limits.
+## 3. Container Hardening
+
+### Non-Root Users
+The Docker files are hardened to prevent escalation exploits:
+- **Backend Container:** Runs under unprivileged user `appuser` (UID `10001`, GID `10001`).
+- **Frontend Container:** Runs under unprivileged user `appuser` (UID `10002`, GID `10002`).
+- Both containers isolate application source files from root-level directories.
+
+### Volumes and Permissions
+- The uploads mount directory is explicitly owned by user `10001` or `10002` to prevent write/read permissions issues.
 
 ---
 
-## 5. Future Improvements
-- **Document Access Control Lists (ACLs):** Extend the database schema to associate documents with user roles, ensuring retrieval only searches documents the current user is authorized to read.
-- **PII Redaction:** Integrate a preprocessing node (e.g., Microsoft Presidio) to strip Personally Identifiable Information (PII) before transmitting chunks to the OpenAI API.
-- **Vulnerability Scanning:** Configure GitHub Actions to execute `bandit` and `safety` scans on pull requests.
+## 4. Secret Management
+
+- Secrets (e.g., `OPENAI_API_KEY`, `DATABASE_URL`) are loaded dynamically via Pydantic settings.
+- No raw secrets are stored in git repositories or docker images.
+- In production, secrets are injected as environment variables via cloud secrets managers (e.g., AWS Secrets Manager, Azure Key Vault, or Kubernetes Secrets).

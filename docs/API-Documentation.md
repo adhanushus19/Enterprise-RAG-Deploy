@@ -12,7 +12,7 @@ All API endpoints (except `/metrics` and `/health`) require the following header
 X-API-Key: enterprise-secret-key-123
 ```
 
-If the header is missing, the server returns `401 Unauthorized`.
+If the header is missing or incorrect, the server returns `401 Unauthorized`.
 
 ---
 
@@ -23,24 +23,25 @@ If the header is missing, the server returns `401 Unauthorized`.
 - **Method:** `POST`
 - **Content-Type:** `multipart/form-data`
 - **Request Parameters:**
-  - `file`: Binary file upload (permitted: `.pdf`, `.docx`, `.pptx`, `.xlsx`)
+  - `file`: Binary file upload (permitted: `.pdf`, `.docx`, `.pptx`, `.xlsx`, max size: **10MB**)
 - **Response Model (200 OK):**
   ```json
   {
     "id": "7ca64731-0df8-43e5-8f64-9b5cf44e1e3e",
     "filename": "q2_financials.xlsx",
     "file_path": "uploads/171779929_q2_financials.xlsx",
-    "author": null,
-    "department": null,
-    "creation_date": null,
-    "tags": [],
+    "author": "System Ingest",
+    "department": "General",
+    "creation_date": "2026-06-08T10:30:00Z",
+    "tags": ["xlsx", "ingested"],
     "doc_type": "xlsx",
     "status": "processing",
-    "created_at": "2026-06-07T22:31:00Z"
+    "created_at": "2026-06-08T10:30:00Z"
   }
   ```
 - **Error Codes:**
   - `400 Bad Request`: Unsupported file type.
+  - `413 Payload Too Large`: Upload file exceeds the 10MB threshold limit.
   - `401 Unauthorized`: Missing or invalid API key.
 
 ---
@@ -61,7 +62,7 @@ If the header is missing, the server returns `401 Unauthorized`.
       "tags": ["xlsx", "quarterly", "financials"],
       "doc_type": "xlsx",
       "status": "completed",
-      "created_at": "2026-06-07T22:31:00Z"
+      "created_at": "2026-06-08T10:30:00Z"
     }
   ]
   ```
@@ -148,6 +149,8 @@ If the header is missing, the server returns `401 Unauthorized`.
     ]
   }
   ```
+- **Error Codes:**
+  - `500 Internal Server Error`: Pipeline orchestration execution failed.
 
 ---
 
@@ -213,7 +216,7 @@ If the header is missing, the server returns `401 Unauthorized`.
   ```json
   {
     "status": "healthy",
-    "timestamp": "2026-06-07T19:25:00.000000",
+    "timestamp": "2026-06-08T10:30:00.000000",
     "services": {
       "database": "healthy",
       "qdrant": "healthy"
@@ -224,7 +227,7 @@ If the header is missing, the server returns `401 Unauthorized`.
   ```json
   {
     "status": "unhealthy",
-    "timestamp": "2026-06-07T19:25:00.000000",
+    "timestamp": "2026-06-08T10:30:00.000000",
     "services": {
       "database": "healthy",
       "qdrant": "unhealthy"
