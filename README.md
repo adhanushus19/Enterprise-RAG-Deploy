@@ -100,6 +100,7 @@ docker-compose up --build
 Access points:
 - **Web UI:** `http://localhost:8501`
 - **Backend API Docs:** `http://localhost:8000/docs`
+- **Health Check Probe:** `http://localhost:8000/health`
 - **Prometheus:** `http://localhost:9090`
 - **Grafana:** `http://localhost:3000` (User: `admin` | Pass: `admin`)
 
@@ -120,6 +121,11 @@ curl -X POST "http://localhost:8000/api/v1/query" \
   -H "X-API-Key: enterprise-secret-key-123" \
   -H "Content-Type: application/json" \
   -d '{"query": "What is the travel meal limit?", "filters": {"doc_type": "pdf"}}'
+```
+
+### 3. Check Service Health
+```bash
+curl -X GET "http://localhost:8000/health"
 ```
 
 ---

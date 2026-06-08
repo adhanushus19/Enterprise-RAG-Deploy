@@ -6,7 +6,7 @@ This document details the REST API endpoints provided by the FastAPI backend ser
 
 ## 1. Global Headers & Authentication
 
-All API endpoints (except `/metrics`) require the following header for authentication:
+All API endpoints (except `/metrics` and `/health`) require the following header for authentication:
 
 ```http
 X-API-Key: enterprise-secret-key-123
@@ -200,5 +200,34 @@ If the header is missing, the server returns `401 Unauthorized`.
     "avg_faithfulness": 0.94,
     "avg_answer_relevancy": 0.89,
     "avg_context_precision": 0.87
+  }
+  ```
+
+---
+
+### 8. Liveness & Readiness Health Check
+- **Endpoint:** `/health`
+- **Method:** `GET`
+- **Authentication:** None (public/internal probe friendly)
+- **Response Model (200 OK - Healthy):**
+  ```json
+  {
+    "status": "healthy",
+    "timestamp": "2026-06-07T19:25:00.000000",
+    "services": {
+      "database": "healthy",
+      "qdrant": "healthy"
+    }
+  }
+  ```
+- **Response Model (503 Service Unavailable - Unhealthy):**
+  ```json
+  {
+    "status": "unhealthy",
+    "timestamp": "2026-06-07T19:25:00.000000",
+    "services": {
+      "database": "healthy",
+      "qdrant": "unhealthy"
+    }
   }
   ```

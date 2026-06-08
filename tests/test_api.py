@@ -98,3 +98,41 @@ def test_evaluation_logging_and_retrieval(client):
     assert summary["total_evaluations"] >= 1
     assert summary["avg_precision_at_k"] == 1.0
     assert summary["avg_faithfulness"] == 0.95
+
+# Tests for /health Endpoint
+def test_health_check_healthy(client, mock_openai):
+    res = client.get("/health")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "healthy"
+    assert data["services"]["database"] == "healthy"
+    assert data["services"]["qdrant"] == "healthy"
+
+def test_health_check_qdrant_unhealthy(client, mock_openai, monkeypatch):
+    class BadQdrantClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def get_collections(self):
+            raise Exception("Qdrant connection refused")
+            
+    monkeypatch.setattr("app.services.vector_store.QdrantClient", BadQdrantClient)
+    
+    res = client.get("/health")
+    assert res.status_code == 503
+    data = res.json()
+    assert data["status"] == "unhealthy"
+    assert data["services"]["qdrant"] == "unhealthy"
+    assert data["services"]["database"] == "healthy"
+
+def test_health_check_database_unhealthy(client, mock_openai, monkeypatch):
+    from sqlalchemy.orm import Session
+    def mock_execute(*args, **kwargs):
+        raise Exception("Database transaction timeout")
+    monkeypatch.setattr(Session, "execute", mock_execute)
+    
+    res = client.get("/health")
+    assert res.status_code == 503
+    data = res.json()
+    assert data["status"] == "unhealthy"
+    assert data["services"]["database"] == "unhealthy"
+    assert data["services"]["qdrant"] == "healthy"

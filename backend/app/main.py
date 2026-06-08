@@ -74,8 +74,8 @@ LIMIT_WINDOW_SECONDS = 60
 
 @app.middleware("http")
 async def rate_limiting_and_metrics_middleware(request, call_next):
-    # Skip rate limiting on metrics
-    if request.url.path == "/metrics":
+    # Skip rate limiting on metrics and health check
+    if request.url.path in ["/metrics", "/health"]:
         return await call_next(request)
         
     client_ip = request.client.host
@@ -181,6 +181,44 @@ def process_document_ingestion(doc_id: UUID, file_path: str, filename: str, doc_
 @app.get("/metrics", include_in_schema=False)
 def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+# Service liveness/readiness health check
+from sqlalchemy import text
+
+@app.get("/health", status_code=200)
+def health_check(db: Session = Depends(get_db)):
+    health_status = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "services": {
+            "database": "unhealthy",
+            "qdrant": "unhealthy"
+        }
+    }
+    
+    # 1. Test Database Connectivity
+    try:
+        db.execute(text("SELECT 1"))
+        health_status["services"]["database"] = "healthy"
+    except Exception as e:
+        logger.error(f"Health check failed for database: {str(e)}")
+        health_status["status"] = "unhealthy"
+        
+    # 2. Test Qdrant Connectivity
+    try:
+        from app.services.vector_store import VectorStoreService
+        vs = VectorStoreService()
+        if vs.qdrant_client:
+            vs.qdrant_client.get_collections()
+            health_status["services"]["qdrant"] = "healthy"
+    except Exception as e:
+        logger.error(f"Health check failed for Qdrant: {str(e)}")
+        health_status["status"] = "unhealthy"
+
+    if health_status["status"] == "unhealthy":
+        return JSONResponse(status_code=503, content=health_status)
+        
+    return health_status
 
 # Endpoints
 @app.post("/api/v1/documents/upload", response_model=DocumentSchema, dependencies=[Depends(verify_api_key)])
