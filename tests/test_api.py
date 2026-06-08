@@ -214,3 +214,38 @@ def test_upload_document_invalid_extension(client):
     )
     assert res.status_code == 400
     assert "Unsupported file extension" in res.json()["detail"]
+
+def test_upload_document_too_large(client):
+    # Mock a large file content exceeding 10MB (10MB + 100 bytes)
+    file_content = b"x" * (10 * 1024 * 1024 + 100)
+    file = io.BytesIO(file_content)
+    res = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("large_test.pdf", file, "application/pdf")},
+        headers={"X-API-Key": "enterprise-secret-key-123"}
+    )
+    assert res.status_code == 413
+    assert "File too large" in res.json()["detail"]
+
+def test_upload_document_size_limit_success(client, monkeypatch):
+    monkeypatch.setattr("os.path.exists", lambda x: True)
+    
+    # Mock a file content exactly 1MB (well below 10MB)
+    file_content = b"x" * (1024 * 1024)
+    file = io.BytesIO(file_content)
+    
+    import builtins
+    mock_open = MagicMock()
+    monkeypatch.setattr(builtins, "open", mock_open)
+    monkeypatch.setattr("app.main.process_document_ingestion", lambda *args, **kwargs: None)
+    
+    res = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("limit_success.pdf", file, "application/pdf")},
+        headers={"X-API-Key": "enterprise-secret-key-123"}
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["filename"] == "limit_success.pdf"
+    assert data["status"] == "processing"
+
