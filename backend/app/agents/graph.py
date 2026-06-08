@@ -25,15 +25,6 @@ class AgentState(TypedDict):
     loop_count: int
 
 
-# Initialize agents
-rewriter_agent = QueryRewriterAgent()
-retriever_agent = RetrieverAgent()
-reranker_agent = RerankerAgent()
-verification_agent = VerificationAgent()
-citation_agent = CitationAgent()
-answer_agent = AnswerAgent()
-
-
 # Node functions
 def rewrite_query_node(state: AgentState) -> Dict[str, Any]:
     query = state["query"]
@@ -47,7 +38,7 @@ def rewrite_query_node(state: AgentState) -> Dict[str, Any]:
     else:
         rewrite_prompt = query
         
-    rewritten = rewriter_agent.run(rewrite_prompt, chat_history)
+    rewritten = QueryRewriterAgent().run(rewrite_prompt, chat_history)
     return {
         "rewritten_query": rewritten,
         "loop_count": loop_count + 1
@@ -65,21 +56,21 @@ def retrieve_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
         logger.error("Database session missing in config['configurable']['db']")
         return {"retrieved_chunks": []}
         
-    chunks = retriever_agent.run(db=db, query=rewritten_query, filters=filters, limit=15)
+    chunks = RetrieverAgent().run(db=db, query=rewritten_query, filters=filters, limit=15)
     return {"retrieved_chunks": chunks}
 
 def rerank_node(state: AgentState) -> Dict[str, Any]:
     query = state["query"]
     retrieved_chunks = state["retrieved_chunks"]
     
-    ranked = reranker_agent.run(query=query, chunks=retrieved_chunks, limit=5)
+    ranked = RerankerAgent().run(query=query, chunks=retrieved_chunks, limit=5)
     return {"reranked_chunks": ranked}
 
 def verify_node(state: AgentState) -> Dict[str, Any]:
     query = state["query"]
     reranked_chunks = state["reranked_chunks"]
     
-    result = verification_agent.run(query=query, chunks=reranked_chunks)
+    result = VerificationAgent().run(query=query, chunks=reranked_chunks)
     return {
         "verification_passed": result.passed,
         "verification_feedback": result.feedback
@@ -88,7 +79,7 @@ def verify_node(state: AgentState) -> Dict[str, Any]:
 def generate_citations_node(state: AgentState) -> Dict[str, Any]:
     reranked_chunks = state["reranked_chunks"]
     
-    citations = citation_agent.generate_citations(reranked_chunks)
+    citations = CitationAgent().generate_citations(reranked_chunks)
     return {"citations": citations}
 
 def generate_answer_node(state: AgentState) -> Dict[str, Any]:
@@ -99,7 +90,7 @@ def generate_answer_node(state: AgentState) -> Dict[str, Any]:
     verification_feedback = state["verification_feedback"]
     
     # Synthesize answer
-    raw_answer = answer_agent.run(
+    raw_answer = AnswerAgent().run(
         query=query,
         chunks=reranked_chunks,
         citations=citations,
@@ -109,7 +100,7 @@ def generate_answer_node(state: AgentState) -> Dict[str, Any]:
     
     # Filter citations to only include those actually in response
     if verification_passed:
-        final_answer, final_citations = citation_agent.filter_citations(raw_answer, citations)
+        final_answer, final_citations = CitationAgent().filter_citations(raw_answer, citations)
     else:
         final_answer = raw_answer
         final_citations = []

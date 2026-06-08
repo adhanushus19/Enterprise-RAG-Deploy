@@ -1,6 +1,11 @@
 import pytest
 import os
 import sys
+
+# Set test environment database URL and OpenAI API key before importing app modules
+os.environ["DATABASE_URL"] = "sqlite:///./test_db.db"
+os.environ["OPENAI_API_KEY"] = "mock-api-key"
+
 from typing import Generator
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine

@@ -44,13 +44,19 @@ class JSONFormatter(logging.Formatter):
 for handler in logging.getLogger().handlers:
     handler.setFormatter(JSONFormatter())
 
-# Initialize DB Tables
-Base.metadata.create_all(bind=engine)
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize DB Tables
+    Base.metadata.create_all(bind=engine)
+    yield
 
 app = FastAPI(
     title="Enterprise AI Knowledge Assistant API",
     description="Production-grade Retrieval-Augmented Generation (RAG) platform",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS Middleware
