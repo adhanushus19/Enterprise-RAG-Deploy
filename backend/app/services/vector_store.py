@@ -234,7 +234,13 @@ class VectorStoreService:
             if filters.get("doc_type"):
                 db_query = db_query.filter(Document.doc_type == filters["doc_type"])
             if filters.get("document_id"):
-                db_query = db_query.filter(DocumentChunk.document_id == filters["document_id"])
+                doc_id_val = filters["document_id"]
+                if isinstance(doc_id_val, str):
+                    try:
+                        doc_id_val = uuid.UUID(doc_id_val)
+                    except Exception:
+                        pass
+                db_query = db_query.filter(DocumentChunk.document_id == doc_id_val)
             if filters.get("tags"):
                 tags = filters["tags"]
                 if isinstance(tags, str):
@@ -251,7 +257,7 @@ class VectorStoreService:
             bm25 = BM25Okapi(tokenized_corpus)
             
             tokenized_query = query.lower().split()
-            scores = bm25.get_document_scores(tokenized_query)
+            scores = bm25.get_scores(tokenized_query)
             
             # Match scores back to database chunks
             chunk_scores = []

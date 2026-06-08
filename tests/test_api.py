@@ -136,3 +136,81 @@ def test_health_check_database_unhealthy(client, mock_openai, monkeypatch):
     assert data["status"] == "unhealthy"
     assert data["services"]["database"] == "unhealthy"
     assert data["services"]["qdrant"] == "healthy"
+
+# Additional API Endpoint Coverage Tests
+import io
+from unittest.mock import MagicMock
+
+def test_compare_documents_success(client, db, mock_openai):
+    from app.db.models import Document
+    doc1 = Document(filename="doc1.pdf", file_path="doc1.pdf", doc_type="pdf", status="completed")
+    doc2 = Document(filename="doc2.pdf", file_path="doc2.pdf", doc_type="pdf", status="completed")
+    db.add(doc1)
+    db.add(doc2)
+    db.commit()
+    
+    payload = {
+        "document_ids": [str(doc1.id), str(doc2.id)],
+        "comparison_prompt": "compare these two"
+    }
+    res = client.post(
+        "/api/v1/compare",
+        json=payload,
+        headers={"X-API-Key": "enterprise-secret-key-123"}
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert "comparison" in data
+    assert len(data["compared_documents"]) == 2
+
+def test_delete_document_success(client, db):
+    from app.db.models import Document
+    doc = Document(filename="todelete.pdf", file_path="todelete.pdf", doc_type="pdf", status="completed")
+    db.add(doc)
+    db.commit()
+    
+    res = client.delete(
+        f"/api/v1/documents/{doc.id}",
+        headers={"X-API-Key": "enterprise-secret-key-123"}
+    )
+    assert res.status_code == 200
+    assert res.json()["message"] == "Document successfully deleted."
+
+def test_delete_document_not_found(client):
+    res = client.delete(
+        f"/api/v1/documents/{uuid4()}",
+        headers={"X-API-Key": "enterprise-secret-key-123"}
+    )
+    assert res.status_code == 404
+
+def test_upload_document_success(client, monkeypatch):
+    monkeypatch.setattr("os.path.exists", lambda x: True)
+    
+    file_content = b"fake pdf content"
+    file = io.BytesIO(file_content)
+    
+    import builtins
+    mock_open = MagicMock()
+    monkeypatch.setattr(builtins, "open", mock_open)
+    monkeypatch.setattr("app.main.process_document_ingestion", lambda *args, **kwargs: None)
+    
+    res = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("test.pdf", file, "application/pdf")},
+        headers={"X-API-Key": "enterprise-secret-key-123"}
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["filename"] == "test.pdf"
+    assert data["status"] == "processing"
+
+def test_upload_document_invalid_extension(client):
+    file_content = b"fake content"
+    file = io.BytesIO(file_content)
+    res = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("test.txt", file, "text/plain")},
+        headers={"X-API-Key": "enterprise-secret-key-123"}
+    )
+    assert res.status_code == 400
+    assert "Unsupported file extension" in res.json()["detail"]
