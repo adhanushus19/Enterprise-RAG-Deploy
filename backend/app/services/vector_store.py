@@ -216,9 +216,11 @@ class VectorStoreService:
     ) -> List[Dict[str, Any]]:
         """
         Executes hybrid retrieval by performing:
-        1. Dense retrieval (Qdrant semantic search)
-        2. Sparse retrieval (BM25 over filtered SQL chunks)
-        Combines results using Reciprocal Rank Fusion (RRF).
+        1. Dense retrieval (Qdrant semantic search using cosine similarity)
+        2. Sparse retrieval (BM25Okapi over SQL-filtered text chunks)
+        Combines and reranks results using Reciprocal Rank Fusion (RRF):
+        RRF(d) = sum_{m in M} 1 / (rrf_k + r_m(d))
+        Where r_m(d) is the rank of document d in model m, and rrf_k is a smoothing constant.
         """
         # 1. Fetch dense results (retrieve slightly more to allow RRF overlap)
         candidate_limit = max(limit * 3, 30)
