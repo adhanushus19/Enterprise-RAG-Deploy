@@ -3,10 +3,11 @@ import time
 import logging
 import json
 from uuid import UUID
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Tuple, AsyncGenerator, Callable
+
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Header, BackgroundTasks, Query
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Header, BackgroundTasks, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
@@ -29,7 +30,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("enterprise_rag")
 
 class JSONFormatter(logging.Formatter):
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         log_data = {
             "timestamp": self.formatTime(record),
             "level": record.levelname,
@@ -47,9 +48,41 @@ for handler in logging.getLogger().handlers:
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Initialize DB Tables
-    Base.metadata.create_all(bind=engine)
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    # Initialize DB Tables and verify Qdrant connection with exponential backoff retry logic
+    max_retries = 5
+    retry_delay = 2
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(f"Database connection attempt {attempt}/{max_retries}...")
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database initialized successfully.")
+            break
+        except Exception as e:
+            if attempt == max_retries:
+                logger.error("Failed to connect to database after maximum retries.", exc_info=True)
+                raise e
+            logger.warning(f"Database connection failed, retrying in {retry_delay}s: {str(e)}")
+            time.sleep(retry_delay)
+            retry_delay *= 2
+            
+    retry_delay = 2
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(f"Checking Qdrant connectivity attempt {attempt}/{max_retries}...")
+            from app.services.vector_store import VectorStoreService
+            vs = VectorStoreService()
+            logger.info("Qdrant collection check completed successfully.")
+            break
+        except Exception as e:
+            if attempt == max_retries:
+                logger.warning(f"Qdrant check failed after maximum retries: {str(e)}")
+                break
+            logger.warning(f"Qdrant connection failed, retrying in {retry_delay}s: {str(e)}")
+            time.sleep(retry_delay)
+            retry_delay *= 2
+            
     yield
 
 app = FastAPI(
@@ -79,7 +112,7 @@ LIMIT_MAX_REQUESTS = 60
 LIMIT_WINDOW_SECONDS = 60
 
 @app.middleware("http")
-async def rate_limiting_and_metrics_middleware(request, call_next):
+async def rate_limiting_and_metrics_middleware(request: Request, call_next: Callable[[Request], Any]) -> Response:
     # Skip rate limiting on metrics and health check
     if request.url.path in ["/metrics", "/health"]:
         return await call_next(request)
@@ -123,7 +156,13 @@ def verify_api_key(x_api_key: str = Header(..., description="Secret corporate AP
     return x_api_key
 
 # Background Ingestion Task
-def process_document_ingestion(doc_id: UUID, file_path: str, filename: str, doc_type: str, db_session_factory):
+def process_document_ingestion(
+    doc_id: UUID,
+    file_path: str,
+    filename: str,
+    doc_type: str,
+    db_session_factory: Callable[[], Session]
+) -> None:
     # We open a fresh session for the background task to avoid cross-thread transaction contamination
     db = db_session_factory()
     processor = DocumentProcessor()
@@ -185,15 +224,15 @@ def process_document_ingestion(doc_id: UUID, file_path: str, filename: str, doc_
 
 # Prometheus metrics route
 @app.get("/metrics", include_in_schema=False)
-def metrics():
+def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 # Service liveness/readiness health check
 from sqlalchemy import text
 
 @app.get("/health", status_code=200)
-def health_check(db: Session = Depends(get_db)):
-    health_status = {
+def health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    health_status: Dict[str, Any] = {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
@@ -207,7 +246,7 @@ def health_check(db: Session = Depends(get_db)):
         db.execute(text("SELECT 1"))
         health_status["services"]["database"] = "healthy"
     except Exception as e:
-        logger.error(f"Health check failed for database: {str(e)}")
+        logger.error(f"Health check failed for database: {str(e)}", exc_info=True)
         health_status["status"] = "unhealthy"
         
     # 2. Test Qdrant Connectivity
@@ -218,7 +257,7 @@ def health_check(db: Session = Depends(get_db)):
             vs.qdrant_client.get_collections()
             health_status["services"]["qdrant"] = "healthy"
     except Exception as e:
-        logger.error(f"Health check failed for Qdrant: {str(e)}")
+        logger.error(f"Health check failed for Qdrant: {str(e)}", exc_info=True)
         health_status["status"] = "unhealthy"
 
     if health_status["status"] == "unhealthy":
@@ -232,17 +271,28 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
-):
-    # Validate file type
-    filename = file.filename
+) -> Document:
+    # 1. Enforce path injection/directory traversal prevention
+    filename = os.path.basename(file.filename)
+    
+    # 2. Validate file type extension
     ext = filename.split(".")[-1].lower() if "." in filename else ""
     if ext not in ["pdf", "docx", "pptx", "xlsx"]:
         raise HTTPException(status_code=400, detail="Unsupported file extension. Only PDF, DOCX, PPTX, XLSX permitted.")
 
+    # 3. Enforce maximum file size limit (10MB) to prevent OOM
+    MAX_FILE_SIZE = 10 * 1024 * 1024 # 10MB
+    content = await file.read(MAX_FILE_SIZE + 1)
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="File too large. Maximum permitted size is 10MB."
+        )
+
     # Save physical file
     target_path = os.path.join(settings.UPLOAD_DIR, f"{time.time()}_{filename}")
     with open(target_path, "wb") as f:
-        f.write(await file.read())
+        f.write(content)
 
     # Insert Document stub
     doc = Document(
@@ -256,7 +306,6 @@ async def upload_document(
     db.refresh(doc)
 
     # Trigger background ingestion
-    # Pass SessionLocal creator to background task to manage db lifecycle safely
     from app.db.connection import SessionLocal
     background_tasks.add_task(
         process_document_ingestion,
@@ -270,7 +319,7 @@ async def upload_document(
     return doc
 
 @app.delete("/api/v1/documents/{document_id}", dependencies=[Depends(verify_api_key)])
-async def delete_document(document_id: UUID, db: Session = Depends(get_db)):
+async def delete_document(document_id: UUID, db: Session = Depends(get_db)) -> Dict[str, str]:
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -280,33 +329,33 @@ async def delete_document(document_id: UUID, db: Session = Depends(get_db)):
     try:
         vector_store.delete_document(str(doc.id))
     except Exception as e:
-        logger.error(f"Failed to delete Qdrant points: {str(e)}")
+        logger.error(f"Failed to delete Qdrant points: {str(e)}", exc_info=True)
 
     # Delete physical file
     if os.path.exists(doc.file_path):
         try:
             os.remove(doc.file_path)
         except Exception as e:
-            logger.error(f"Failed to delete physical file {doc.file_path}: {str(e)}")
+            logger.error(f"Failed to delete physical file {doc.file_path}: {str(e)}", exc_info=True)
 
-    # Delete from DB (Cascade delete removes chunks)
+    # Delete from DB
     db.delete(doc)
     db.commit()
 
     return {"message": "Document successfully deleted."}
 
 @app.get("/api/v1/documents", response_model=List[DocumentSchema], dependencies=[Depends(verify_api_key)])
-async def list_documents(db: Session = Depends(get_db)):
+async def list_documents(db: Session = Depends(get_db)) -> List[Document]:
     return db.query(Document).order_by(Document.created_at.desc()).all()
 
 @app.post("/api/v1/search", response_model=List[SearchHit], dependencies=[Depends(verify_api_key)])
-async def search_documents(request: SearchRequest, db: Session = Depends(get_db)):
+async def search_documents(request: SearchRequest, db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
     vector_store = VectorStoreService()
     hits = vector_store.search_hybrid(db=db, query=request.query, limit=request.limit, filters=request.filters)
     return hits
 
 @app.post("/api/v1/query", response_model=QueryResponse, dependencies=[Depends(verify_api_key)])
-async def query_rag_pipeline(request: QueryRequest, db: Session = Depends(get_db)):
+async def query_rag_pipeline(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResponse:
     # Prepare graph inputs
     inputs = {
         "query": request.query,
@@ -321,7 +370,6 @@ async def query_rag_pipeline(request: QueryRequest, db: Session = Depends(get_db
         "loop_count": 0
     }
     
-    # Run graph passing db session in config configurable
     try:
         config = {"configurable": {"db": db}}
         output = rag_graph.invoke(inputs, config=config)
@@ -336,7 +384,7 @@ async def query_rag_pipeline(request: QueryRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=500, detail="Internal RAG pipeline error during multi-agent graph execution.")
 
 @app.post("/api/v1/compare", response_model=CompareResponse, dependencies=[Depends(verify_api_key)])
-async def compare_documents(request: CompareRequest, db: Session = Depends(get_db)):
+async def compare_documents(request: CompareRequest, db: Session = Depends(get_db)) -> CompareResponse:
     # 1. Fetch documents metadata
     docs = db.query(Document).filter(Document.id.in_(request.document_ids)).all()
     if len(docs) < 2:
@@ -347,7 +395,6 @@ async def compare_documents(request: CompareRequest, db: Session = Depends(get_d
     compared_info = []
     
     for i, doc in enumerate(docs):
-        # Fetch first 5 chunks of the document
         chunks = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).order_by(DocumentChunk.chunk_index).limit(5).all()
         chunks_text = "\n".join([c.content for c in chunks])
         
@@ -388,12 +435,11 @@ async def compare_documents(request: CompareRequest, db: Session = Depends(get_d
             compared_documents=compared_info
         )
     except Exception as e:
-        logger.error(f"Compare service failed: {str(e)}")
+        logger.error(f"Compare service failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to generate document comparison: {str(e)}")
 
 @app.get("/api/v1/evaluation", response_model=EvaluationMetricsSummary, dependencies=[Depends(verify_api_key)])
-async def get_evaluation_metrics(db: Session = Depends(get_db)):
-    # Calculate aggregated averages of metrics stored in PG
+async def get_evaluation_metrics(db: Session = Depends(get_db)) -> EvaluationMetricsSummary:
     metrics_list = db.query(EvaluationMetric).all()
     total = len(metrics_list)
     if total == 0:
@@ -425,7 +471,7 @@ async def get_evaluation_metrics(db: Session = Depends(get_db)):
     )
 
 @app.post("/api/v1/evaluation", response_model=EvaluationResponseSchema, dependencies=[Depends(verify_api_key)])
-async def record_evaluation_metric(metric: EvaluationCreate, db: Session = Depends(get_db)):
+async def record_evaluation_metric(metric: EvaluationCreate, db: Session = Depends(get_db)) -> EvaluationMetric:
     db_metric = EvaluationMetric(
         query=metric.query,
         response=metric.response,

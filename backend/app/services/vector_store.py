@@ -17,7 +17,7 @@ class VectorStoreService:
     and hybrid retrieval orchestration (Dense + BM25 with Reciprocal Rank Fusion).
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.qdrant_client = QdrantClient(
             host=settings.QDRANT_HOST,
             port=settings.QDRANT_PORT
@@ -30,7 +30,7 @@ class VectorStoreService:
         self.vector_size = 1536  # text-embedding-3-small dimension
         self._ensure_collection()
 
-    def _ensure_collection(self):
+    def _ensure_collection(self) -> None:
         try:
             collections = self.qdrant_client.get_collections().collections
             collection_names = [col.name for col in collections]
@@ -44,7 +44,7 @@ class VectorStoreService:
                     )
                 )
         except Exception as e:
-            logger.error(f"Failed to check/create Qdrant collection: {str(e)}")
+            logger.error("Failed to check/create Qdrant collection", exc_info=True)
 
     def get_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
@@ -64,7 +64,7 @@ class VectorStoreService:
             )
             return [data.embedding for data in response.data]
         except Exception as e:
-            logger.error(f"Failed to generate embeddings: {str(e)}")
+            logger.error("Failed to generate embeddings", exc_info=True)
             raise e
 
     def index_chunks(self, db_chunks: List[DocumentChunk], document: Document) -> List[str]:
@@ -112,12 +112,12 @@ class VectorStoreService:
             )
             logger.info(f"Successfully indexed {len(points)} points in Qdrant.")
         except Exception as e:
-            logger.error(f"Failed to index points in Qdrant: {str(e)}")
+            logger.error("Failed to index points in Qdrant", exc_info=True)
             raise e
 
         return vector_ids
 
-    def delete_document(self, document_id: str):
+    def delete_document(self, document_id: str) -> None:
         """
         Deletes all vector points associated with a document ID.
         """
@@ -137,7 +137,7 @@ class VectorStoreService:
             )
             logger.info(f"Deleted points for document {document_id} from Qdrant.")
         except Exception as e:
-            logger.error(f"Failed to delete points from Qdrant: {str(e)}")
+            logger.error("Failed to delete points from Qdrant", exc_info=True)
             raise e
 
     def _build_qdrant_filter(self, filters: Optional[Dict[str, Any]]) -> Optional[qmodels.Filter]:
@@ -203,7 +203,7 @@ class VectorStoreService:
                 })
             return hits
         except Exception as e:
-            logger.error(f"Dense search failed: {str(e)}")
+            logger.error("Dense search failed", exc_info=True)
             return []
 
     def search_hybrid(

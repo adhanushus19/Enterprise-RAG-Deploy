@@ -27,7 +27,7 @@ class DocumentProcessor:
     and extracting content, page/cell locations, and semantic metadata.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.openai_client = None
         if settings.OPENAI_API_KEY:
             self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
@@ -174,7 +174,7 @@ class DocumentProcessor:
                     "doc_type": doc_type
                 }
             except Exception as e:
-                logger.error(f"LLM metadata extraction failed, falling back: {str(e)}")
+                logger.error("LLM metadata extraction failed, falling back", exc_info=True)
 
         # Fallback implementation
         tags = ["ingested"]
