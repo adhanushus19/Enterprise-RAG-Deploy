@@ -151,6 +151,10 @@ async def rate_limiting_and_metrics_middleware(request: Request, call_next: Call
 
 # Security Header Dependency
 def verify_api_key(x_api_key: str = Header(..., description="Secret corporate API key authentication")) -> str:
+    """
+    Verifies the client API key against the configured settings API_KEY.
+    Ensures secure access control for all document ingestion and retrieval endpoints.
+    """
     if x_api_key != settings.API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
     return x_api_key
